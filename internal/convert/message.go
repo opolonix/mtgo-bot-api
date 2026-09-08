@@ -538,25 +538,18 @@ func convertReplyMarkup(rm tg.ReplyMarkupClass) *apitypes.InlineKeyboardMarkup {
 		for _, row := range markup.Rows {
 			buttons := make([]apitypes.InlineKeyboardButton, 0, len(row.Buttons))
 			for _, btn := range row.Buttons {
-				b := apitypes.InlineKeyboardButton{}
-				switch btn := btn.(type) {
-				case *tg.KeyboardButton:
-					b.Text = btn.Text
-				case *tg.KeyboardButtonURL:
-					b.Text = btn.Text
-					b.URL = btn.URL
-				case *tg.KeyboardButtonCallback:
-					b.Text = btn.Text
-					b.CallbackData = string(btn.Data)
-				case *tg.KeyboardButtonSwitchInline:
-					b.Text = btn.Text
-					b.SwitchInlineQuery = btn.Query
-				case *tg.KeyboardButtonBuy:
-					b.Text = btn.Text
+				b := apitypes.InlineKeyboardButton{Text: btn.Text}
+				switch buttonType := btn.Type.(type) {
+				case *tg.InlineButtonTypeURL:
+					b.URL = buttonType.URL
+				case *tg.InlineButtonTypeCallback:
+					b.CallbackData = string(buttonType.Data)
+				case *tg.InlineButtonTypeSwitchInline:
+					b.SwitchInlineQuery = buttonType.Query
+				case *tg.InlineButtonTypeBuy:
 					b.Pay = true
-				case *tg.KeyboardButtonWebView:
-					b.Text = btn.Text
-					b.WebApp = &apitypes.WebAppInfo{URL: btn.URL}
+				case *tg.InlineButtonTypeWebView:
+					b.WebApp = &apitypes.WebAppInfo{URL: buttonType.URL}
 				default:
 					continue
 				}

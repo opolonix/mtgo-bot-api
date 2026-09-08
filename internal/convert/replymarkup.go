@@ -26,43 +26,41 @@ func ReplyMarkup(raw string) (tg.ReplyMarkupClass, error) {
 	if markup.InlineKeyboard == nil {
 		return nil, nil
 	}
-	rows := make([]*tg.KeyboardButtonRow, 0, len(markup.InlineKeyboard))
+	rows := make([]*tg.KeyboardInlineButtonRow, 0, len(markup.InlineKeyboard))
 	for _, botRow := range markup.InlineKeyboard {
-		buttons := make([]tg.KeyboardButtonClass, 0, len(botRow))
+		buttons := make([]*tg.KeyboardInlineButton, 0, len(botRow))
 		for _, btn := range botRow {
 			buttons = append(buttons, convertInlineButton(btn))
 		}
-		rows = append(rows, &tg.KeyboardButtonRow{Buttons: buttons})
+		rows = append(rows, &tg.KeyboardInlineButtonRow{Buttons: buttons})
 	}
 	return &tg.ReplyInlineMarkup{Rows: rows}, nil
 }
 
-// convertInlineButton maps a Bot API InlineKeyboardButton to the matching
-// tg.KeyboardButtonClass constructor.
-func convertInlineButton(btn apitypes.InlineKeyboardButton) tg.KeyboardButtonClass {
+// convertInlineButton maps a Bot API InlineKeyboardButton to a
+// tg.KeyboardInlineButton with the matching InlineButtonType.
+func convertInlineButton(btn apitypes.InlineKeyboardButton) *tg.KeyboardInlineButton {
+	button := &tg.KeyboardInlineButton{Text: btn.Text}
 	switch {
 	case btn.CallbackData != "":
-		return &tg.KeyboardButtonCallback{Text: btn.Text, Data: []byte(btn.CallbackData)}
+		button.Type = &tg.InlineButtonTypeCallback{Data: []byte(btn.CallbackData)}
 	case btn.URL != "":
-		return &tg.KeyboardButtonURL{Text: btn.Text, URL: btn.URL}
+		button.Type = &tg.InlineButtonTypeURL{URL: btn.URL}
 	case btn.WebApp != nil && btn.WebApp.URL != "":
-		return &tg.KeyboardButtonWebView{Text: btn.Text, URL: btn.WebApp.URL}
+		button.Type = &tg.InlineButtonTypeWebView{URL: btn.WebApp.URL}
 	case btn.SwitchInlineQueryChosenChat != nil:
-		return &tg.KeyboardButtonSwitchInline{
-			Text:  btn.Text,
+		button.Type = &tg.InlineButtonTypeSwitchInline{
 			Query: btn.SwitchInlineQueryChosenChat.Query,
 		}
 	case btn.SwitchInlineQueryCurrentChat != "":
-		return &tg.KeyboardButtonSwitchInline{
-			Text:     btn.Text,
+		button.Type = &tg.InlineButtonTypeSwitchInline{
 			Query:    btn.SwitchInlineQueryCurrentChat,
 			SamePeer: true,
 		}
 	case btn.SwitchInlineQuery != "":
-		return &tg.KeyboardButtonSwitchInline{Text: btn.Text, Query: btn.SwitchInlineQuery}
+		button.Type = &tg.InlineButtonTypeSwitchInline{Query: btn.SwitchInlineQuery}
 	case btn.Pay:
-		return &tg.KeyboardButtonBuy{Text: btn.Text}
-	default:
-		return &tg.KeyboardButton{Text: btn.Text}
+		button.Type = &tg.InlineButtonTypeBuy{}
 	}
+	return button
 }

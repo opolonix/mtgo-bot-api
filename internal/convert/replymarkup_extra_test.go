@@ -10,49 +10,70 @@ import (
 
 func TestConvertInlineButton_AllVariants(t *testing.T) {
 	tests := []struct {
-		name   string
-		btn    apitypes.InlineKeyboardButton
-		want   func(tg.KeyboardButtonClass) bool
+		name string
+		btn  apitypes.InlineKeyboardButton
+		want func(*tg.KeyboardInlineButton) bool
 	}{
 		{
 			name: "callback_data",
 			btn:  apitypes.InlineKeyboardButton{Text: "T", CallbackData: "cd"},
-			want: func(b tg.KeyboardButtonClass) bool { _, ok := b.(*tg.KeyboardButtonCallback); return ok },
+			want: func(b *tg.KeyboardInlineButton) bool {
+				_, ok := b.Type.(*tg.InlineButtonTypeCallback)
+				return ok
+			},
 		},
 		{
 			name: "url",
 			btn:  apitypes.InlineKeyboardButton{Text: "T", URL: "https://x"},
-			want: func(b tg.KeyboardButtonClass) bool { _, ok := b.(*tg.KeyboardButtonURL); return ok },
+			want: func(b *tg.KeyboardInlineButton) bool {
+				_, ok := b.Type.(*tg.InlineButtonTypeURL)
+				return ok
+			},
 		},
 		{
 			name: "web_app",
 			btn:  apitypes.InlineKeyboardButton{Text: "T", WebApp: &apitypes.WebAppInfo{URL: "https://app"}},
-			want: func(b tg.KeyboardButtonClass) bool { _, ok := b.(*tg.KeyboardButtonWebView); return ok },
+			want: func(b *tg.KeyboardInlineButton) bool {
+				_, ok := b.Type.(*tg.InlineButtonTypeWebView)
+				return ok
+			},
 		},
 		{
 			name: "switch_chosen_chat",
 			btn:  apitypes.InlineKeyboardButton{Text: "T", SwitchInlineQueryChosenChat: &apitypes.SwitchInlineQueryChosenChat{Query: "q"}},
-			want: func(b tg.KeyboardButtonClass) bool { cb, ok := b.(*tg.KeyboardButtonSwitchInline); return ok && !cb.SamePeer },
+			want: func(b *tg.KeyboardInlineButton) bool {
+				cb, ok := b.Type.(*tg.InlineButtonTypeSwitchInline)
+				return ok && !cb.SamePeer
+			},
 		},
 		{
 			name: "switch_current_chat",
 			btn:  apitypes.InlineKeyboardButton{Text: "T", SwitchInlineQueryCurrentChat: "cur"},
-			want: func(b tg.KeyboardButtonClass) bool { cb, ok := b.(*tg.KeyboardButtonSwitchInline); return ok && cb.SamePeer && cb.Query == "cur" },
+			want: func(b *tg.KeyboardInlineButton) bool {
+				cb, ok := b.Type.(*tg.InlineButtonTypeSwitchInline)
+				return ok && cb.SamePeer && cb.Query == "cur"
+			},
 		},
 		{
 			name: "switch_inline_query",
 			btn:  apitypes.InlineKeyboardButton{Text: "T", SwitchInlineQuery: "all"},
-			want: func(b tg.KeyboardButtonClass) bool { cb, ok := b.(*tg.KeyboardButtonSwitchInline); return ok && cb.Query == "all" && !cb.SamePeer },
+			want: func(b *tg.KeyboardInlineButton) bool {
+				cb, ok := b.Type.(*tg.InlineButtonTypeSwitchInline)
+				return ok && cb.Query == "all" && !cb.SamePeer
+			},
 		},
 		{
 			name: "pay",
 			btn:  apitypes.InlineKeyboardButton{Text: "T", Pay: true},
-			want: func(b tg.KeyboardButtonClass) bool { _, ok := b.(*tg.KeyboardButtonBuy); return ok },
+			want: func(b *tg.KeyboardInlineButton) bool {
+				_, ok := b.Type.(*tg.InlineButtonTypeBuy)
+				return ok
+			},
 		},
 		{
 			name: "default",
 			btn:  apitypes.InlineKeyboardButton{Text: "T"},
-			want: func(b tg.KeyboardButtonClass) bool { _, ok := b.(*tg.KeyboardButton); return ok },
+			want: func(b *tg.KeyboardInlineButton) bool { return b.Type == nil },
 		},
 	}
 	for _, tt := range tests {
@@ -67,12 +88,12 @@ func TestConvertInlineButton_AllVariants(t *testing.T) {
 
 func TestConvertInlineButton_CallbackDataValue(t *testing.T) {
 	b := convertInlineButton(apitypes.InlineKeyboardButton{Text: "Go", CallbackData: "payload"})
-	cb, ok := b.(*tg.KeyboardButtonCallback)
+	cb, ok := b.Type.(*tg.InlineButtonTypeCallback)
 	if !ok {
-		t.Fatalf("type = %T", b)
+		t.Fatalf("type = %T", b.Type)
 	}
-	if cb.Text != "Go" || string(cb.Data) != "payload" {
-		t.Errorf("callback = %+v", cb)
+	if b.Text != "Go" || string(cb.Data) != "payload" {
+		t.Errorf("callback = %+v", b)
 	}
 }
 
@@ -90,8 +111,8 @@ func TestReplyMarkup_FullMarkup(t *testing.T) {
 	if len(inline.Rows) != 1 || len(inline.Rows[0].Buttons) != 2 {
 		t.Fatalf("rows/buttons = %+v", inline.Rows)
 	}
-	if _, ok := inline.Rows[0].Buttons[0].(*tg.KeyboardButtonCallback); !ok {
-		t.Errorf("button0 type = %T", inline.Rows[0].Buttons[0])
+	if _, ok := inline.Rows[0].Buttons[0].Type.(*tg.InlineButtonTypeCallback); !ok {
+		t.Errorf("button0 type = %T", inline.Rows[0].Buttons[0].Type)
 	}
 }
 

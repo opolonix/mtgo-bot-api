@@ -273,22 +273,31 @@ func TestKeyboardButtonFromJSON(t *testing.T) {
 		name    string
 		json    string
 		wantErr bool
-		typeOf  func(tg.KeyboardButtonClass) bool
+		typeOf  func(*tg.KeyboardButton) bool
 	}{
 		{
-			name:   "plain",
-			json:   `{"text":"Hi"}`,
-			typeOf: func(b tg.KeyboardButtonClass) bool { _, ok := b.(*tg.KeyboardButton); return ok },
+			name: "plain",
+			json: `{"text":"Hi"}`,
+			typeOf: func(b *tg.KeyboardButton) bool {
+				_, ok := b.Type.(*tg.ButtonTypeDefault)
+				return ok
+			},
 		},
 		{
-			name:   "url",
-			json:   `{"text":"Open","url":"https://x"}`,
-			typeOf: func(b tg.KeyboardButtonClass) bool { _, ok := b.(*tg.KeyboardButtonURL); return ok },
+			name: "url",
+			json: `{"text":"Open","url":"https://x"}`,
+			typeOf: func(b *tg.KeyboardButton) bool {
+				_, ok := b.Type.(*tg.ButtonTypeDefault)
+				return ok
+			},
 		},
 		{
-			name:   "web_app",
-			json:   `{"text":"App","web_app":{"url":"https://app"}}`,
-			typeOf: func(b tg.KeyboardButtonClass) bool { _, ok := b.(*tg.KeyboardButtonWebView); return ok },
+			name: "web_app",
+			json: `{"text":"App","web_app":{"url":"https://app"}}`,
+			typeOf: func(b *tg.KeyboardButton) bool {
+				_, ok := b.Type.(*tg.ButtonTypeSimpleWebView)
+				return ok
+			},
 		},
 		{
 			name:    "missing_text",

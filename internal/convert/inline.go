@@ -551,8 +551,8 @@ func InlineMessageIDFromTL(id tg.InputBotInlineMessageIDClass) string {
 }
 
 // KeyboardButtonFromJSON converts a Bot API KeyboardButton JSON into a
-// tg.KeyboardButtonClass for savePreparedKeyboardButton.
-func KeyboardButtonFromJSON(jsonStr string) (tg.KeyboardButtonClass, error) {
+// tg.KeyboardButton for savePreparedKeyboardButton.
+func KeyboardButtonFromJSON(jsonStr string) (*tg.KeyboardButton, error) {
 	var btn struct {
 		Text   string `json:"text"`
 		URL    string `json:"url,omitempty"`
@@ -567,16 +567,12 @@ func KeyboardButtonFromJSON(jsonStr string) (tg.KeyboardButtonClass, error) {
 		return nil, errors.New("button text is required")
 	}
 	if btn.WebApp.URL != "" {
-		return &tg.KeyboardButtonWebView{
+		return &tg.KeyboardButton{
 			Text: btn.Text,
-			URL:  btn.WebApp.URL,
+			Type: &tg.ButtonTypeSimpleWebView{URL: btn.WebApp.URL},
 		}, nil
 	}
-	if btn.URL != "" {
-		return &tg.KeyboardButtonURL{
-			Text: btn.Text,
-			URL:  btn.URL,
-		}, nil
-	}
-	return &tg.KeyboardButton{Text: btn.Text}, nil
+	// The current TL layer has no URL type for reply-keyboard buttons, so a
+	// plain-url button degrades to a default (text-only) button.
+	return &tg.KeyboardButton{Text: btn.Text, Type: &tg.ButtonTypeDefault{}}, nil
 }
