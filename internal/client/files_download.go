@@ -112,17 +112,13 @@ func (c *Client) downloadToTemp(ctx context.Context, decoded fileid.Decoded, loc
 	}
 
 	if webLocation, ok := location.(tg.InputWebFileLocationClass); ok {
-		chunks, total, err := c.downloadWebByLocation(ctx, webLocation)
-		if err != nil {
-			return "", 0, err
-		}
-		return c.writeChunksToFile(botTempDir, decoded.ID, chunks, total)
+		return c.downloadWebByLocation(ctx, webLocation, botTempDir, decoded.ID)
 	}
 	fileLocation, ok := location.(tg.InputFileLocationClass)
 	if !ok {
 		return "", 0, NewError(400, "Bad Request: invalid file_id")
 	}
-	chunks, total, err := c.downloadByLocation(ctx, fileLocation)
+	path, total, err := c.downloadByLocation(ctx, fileLocation, botTempDir, decoded.ID)
 	// file_reference refresh (F7): re-fetch the originating message and retry once.
 	if err != nil && isFileReferenceExpired(err) {
 		if fresh, ok := c.tryRefreshFileReference(ctx, decoded); ok {
@@ -135,12 +131,12 @@ func (c *Client) downloadToTemp(ctx context.Context, decoded fileid.Decoded, loc
 			if !ok {
 				return "", 0, NewError(400, "Bad Request: invalid file_id")
 			}
-			chunks, total, err = c.downloadByLocation(ctx, fileLocation)
+			path, total, err = c.downloadByLocation(ctx, fileLocation, botTempDir, decoded.ID)
 		}
 	}
 	switch {
 	case err == nil:
-		return c.writeChunksToFile(botTempDir, decoded.ID, chunks, total)
+		return path, total, nil
 	case errors.Is(err, errCDNRedirect):
 		location, locErr := buildFileLocation(decoded)
 		if locErr != nil {
@@ -158,14 +154,25 @@ func (c *Client) downloadToTemp(ctx context.Context, decoded fileid.Decoded, loc
 
 // downloadWebByLocation streams a web file through upload.getWebFile, used by
 // TDLib WebRemoteFileLocation and remotely generated web thumbnails.
-func (c *Client) downloadWebByLocation(ctx context.Context, location tg.InputWebFileLocationClass) ([][]byte, int, error) {
+func (c *Client) downloadWebByLocation(ctx context.Context, location tg.InputWebFileLocationClass, botTempDir string, id int64) (string, int, error) {
 	chunkSize := c.params.DownloadChunkSize
 	if chunkSize <= 0 {
 		chunkSize = downloadChunkSize
 	}
+	out, err := os.CreateTemp(botTempDir, fmt.Sprintf("file_%d_", id))
+	if err != nil {
+		return "", 0, NewError(500, "Internal Server Error: failed to create temp file: "+err.Error())
+	}
+	tempPath := out.Name()
+	completed := false
+	defer func() {
+		if !completed {
+			_ = out.Close()
+			_ = os.Remove(tempPath)
+		}
+	}()
 	var offset int32
 	var totalBytes int
-	var chunks [][]byte
 	for {
 		result, err := c.rpc.UploadGetWebFile(ctx, &tg.UploadGetWebFileRequest{
 			Location: location,
@@ -173,23 +180,29 @@ func (c *Client) downloadWebByLocation(ctx context.Context, location tg.InputWeb
 			Limit:    chunkSize,
 		})
 		if err != nil {
-			return nil, 0, err
+			return "", 0, err
 		}
 		chunk := result.Bytes
 		if len(chunk) == 0 {
 			break
 		}
-		chunks = append(chunks, chunk)
+		if _, err := out.Write(chunk); err != nil {
+			return "", 0, NewError(500, "Internal Server Error: failed to write file: "+err.Error())
+		}
 		totalBytes += len(chunk)
 		offset += int32(len(chunk))
 		if !c.params.LocalMode && totalBytes > maxDownloadFileSize {
-			return nil, 0, NewError(400, "Bad Request: file is too big")
+			return "", 0, NewError(400, "Bad Request: file is too big")
 		}
 		if len(chunk) < int(chunkSize) || result.Size > 0 && totalBytes >= int(result.Size) {
 			break
 		}
 	}
-	return chunks, totalBytes, nil
+	if err := out.Close(); err != nil {
+		return "", 0, NewError(500, "Internal Server Error: failed to close file: "+err.Error())
+	}
+	completed = true
+	return tempPath, totalBytes, nil
 }
 
 // botTempDir resolves and creates the per-bot temp directory, returning its
@@ -212,24 +225,6 @@ func (c *Client) botTempDir() (string, error) {
 		return "", NewError(500, "Internal Server Error: failed to create temp dir: "+err.Error())
 	}
 	return botTempDir, nil
-}
-
-// writeChunksToFile writes the downloaded chunks to a fresh temp file and
-// returns its path and total size.
-func (c *Client) writeChunksToFile(botTempDir string, id int64, chunks [][]byte, total int) (string, int, error) {
-	out, err := os.CreateTemp(botTempDir, fmt.Sprintf("file_%d_", id))
-	if err != nil {
-		return "", 0, NewError(500, "Internal Server Error: failed to create temp file: "+err.Error())
-	}
-	tempPath := out.Name()
-	defer func() { _ = out.Close() }()
-	for _, chunk := range chunks {
-		if _, err := out.Write(chunk); err != nil {
-			_ = os.Remove(tempPath)
-			return "", 0, NewError(500, "Internal Server Error: failed to write file: "+err.Error())
-		}
-	}
-	return tempPath, total, nil
 }
 
 // downloadViaCDN fetches a CDN-served file via mtgo's DownloadToFile, which
@@ -269,20 +264,31 @@ func (c *Client) downloadViaCDN(ctx context.Context, location tg.InputFileLocati
 	return tempPath, int(info.Size()), nil
 }
 
-// downloadByLocation streams a file from Telegram in 1 MB chunks via
-// upload.getFile, returning the gathered chunks and their total size. A
+// downloadByLocation streams a file from Telegram in bounded chunks via
+// upload.getFile, writing directly to a unique temporary file. A
 // non-local download is capped at maxDownloadFileSize (Client.cpp:9282). On
 // failure it returns the raw RPC error (e.g. FILE_REFERENCE_EXPIRED) so the
 // caller can refresh the file_reference and retry; the size-cap and
 // unavailable-file cases return an already-formed Bot API *Error.
-func (c *Client) downloadByLocation(ctx context.Context, location tg.InputFileLocationClass) ([][]byte, int, error) {
+func (c *Client) downloadByLocation(ctx context.Context, location tg.InputFileLocationClass, botTempDir string, id int64) (string, int, error) {
 	chunkSize := c.params.DownloadChunkSize
 	if chunkSize <= 0 {
 		chunkSize = downloadChunkSize
 	}
+	out, err := os.CreateTemp(botTempDir, fmt.Sprintf("file_%d_", id))
+	if err != nil {
+		return "", 0, NewError(500, "Internal Server Error: failed to create temp file: "+err.Error())
+	}
+	tempPath := out.Name()
+	completed := false
+	defer func() {
+		if !completed {
+			_ = out.Close()
+			_ = os.Remove(tempPath)
+		}
+	}()
 	var offset int64
 	var totalBytes int
-	var chunks [][]byte
 	for {
 		req := &tg.UploadGetFileRequest{
 			Location: location,
@@ -293,30 +299,36 @@ func (c *Client) downloadByLocation(ctx context.Context, location tg.InputFileLo
 
 		result, err := c.rpc.UploadGetFile(ctx, req)
 		if err != nil {
-			return nil, 0, err
+			return "", 0, err
 		}
 
 		chunk, err := classifyGetFileResult(result)
 		if err != nil {
-			return nil, 0, err
+			return "", 0, err
 		}
 		if len(chunk) == 0 {
 			break
 		}
-		chunks = append(chunks, chunk)
+		if _, err := out.Write(chunk); err != nil {
+			return "", 0, NewError(500, "Internal Server Error: failed to write file: "+err.Error())
+		}
 		totalBytes += len(chunk)
 		offset += int64(len(chunk))
 
-		// Non-local download cap (Client.cpp:9282): bail before buffering more.
+		// Non-local download cap (Client.cpp:9282).
 		if !c.params.LocalMode && totalBytes > maxDownloadFileSize {
-			return nil, 0, NewError(400, "Bad Request: file is too big")
+			return "", 0, NewError(400, "Bad Request: file is too big")
 		}
 
 		if len(chunk) < int(chunkSize) {
 			break // last chunk
 		}
 	}
-	return chunks, totalBytes, nil
+	if err := out.Close(); err != nil {
+		return "", 0, NewError(500, "Internal Server Error: failed to close file: "+err.Error())
+	}
+	completed = true
+	return tempPath, totalBytes, nil
 }
 
 // classifyGetFileResult extracts the chunk bytes from an upload.getFile result:
