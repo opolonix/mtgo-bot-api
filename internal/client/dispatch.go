@@ -75,8 +75,10 @@ func (c *Client) Dispatch(ctx context.Context, q *server.Query) (status int, bod
 	// Upload flood-limit gate (Client.cpp:13327-13350). Applied after method
 	// resolution, exactly as in on_cmd, so unknown methods 404 before any
 	// throttling state is touched.
-	if status, body, proceed := c.applyUploadFloodLimit(ctx, q); !proceed {
-		return status, body
+	if !c.hosted {
+		if status, body, proceed := c.applyUploadFloodLimit(ctx, q); !proceed {
+			return status, body
+		}
 	}
 	// Resolve @username peer args (chat_id/from_chat_id/sender_chat_id) live via
 	// contacts.resolveUsername and rewrite them to numeric chat_ids, so methods

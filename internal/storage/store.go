@@ -28,11 +28,28 @@ import (
 // Store is the per-bot SQLite persistence handle. It holds two connections
 // to the same file: db (writer, serial) and rdb (reader, concurrent WAL).
 type Store struct {
-	db    *sql.DB // writer (serial)
-	rdb   *sql.DB // reader (concurrent WAL reads)
-	path  string
-	botID string
-	mu    sync.Mutex
+	db          *sql.DB // writer (serial)
+	rdb         *sql.DB // reader (concurrent WAL reads)
+	path        string
+	botID       string
+	mu          sync.Mutex
+	peerBackend PeerBackend
+}
+
+var ErrExternalWebhookUnsupported = errors.New("webhooks are not available for externally managed Bot API clients")
+
+// PeerBackend lets an externally managed Bot API client use its host's peer
+// storage instead of creating another per-bot SQLite database or cache.
+type PeerBackend interface {
+	SavePeer(context.Context, Peer) error
+	GetPeer(context.Context, int64) (Peer, error)
+	GetPeerByUsername(context.Context, string) (Peer, error)
+	SaveChatFlags(context.Context, int64, bool, bool, string) error
+	SaveBotMemberStatus(context.Context, int64, string) error
+}
+
+func NewExternalPeerStore(backend PeerBackend) *Store {
+	return &Store{peerBackend: backend}
 }
 
 // ValidBotID reports whether s is a safe bot ID for use in filesystem paths:
@@ -89,6 +106,9 @@ func Open(dir, botID string) (*Store, error) {
 
 // Close closes both the reader and writer database connections.
 func (s *Store) Close() error {
+	if s.peerBackend != nil {
+		return nil
+	}
 	_ = s.rdb.Close()
 	return s.db.Close()
 }
@@ -176,6 +196,9 @@ CREATE TABLE IF NOT EXISTS webhook_config (
 // --- Session string persistence (replaces mtgo session storage) ---
 
 func (s *Store) GetSessionString(ctx context.Context) (string, error) {
+	if s.peerBackend != nil {
+		return "", errors.New("session strings are managed by the host")
+	}
 	var ss string
 	err := s.rdb.QueryRowContext(ctx, `SELECT session_string FROM session_strings WHERE bot_id = ?`, s.botID).Scan(&ss)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -188,6 +211,9 @@ func (s *Store) GetSessionString(ctx context.Context) (string, error) {
 }
 
 func (s *Store) SetSessionString(ctx context.Context, ss string) error {
+	if s.peerBackend != nil {
+		return errors.New("session strings are managed by the host")
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	_, err := s.db.ExecContext(ctx,
@@ -229,6 +255,9 @@ type Peer struct {
 
 // SavePeer upserts a peer into the cache.
 func (s *Store) SavePeer(ctx context.Context, p Peer) error {
+	if s.peerBackend != nil {
+		return s.peerBackend.SavePeer(ctx, p)
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	_, err := s.db.ExecContext(ctx,
@@ -241,6 +270,9 @@ func (s *Store) SavePeer(ctx context.Context, p Peer) error {
 
 // GetPeer returns the cached peer by id, or sql.ErrNoRows.
 func (s *Store) GetPeer(ctx context.Context, id int64) (Peer, error) {
+	if s.peerBackend != nil {
+		return s.peerBackend.GetPeer(ctx, id)
+	}
 	var p Peer
 	var typ string
 	var isMegagroup, isDeactivated int
@@ -257,6 +289,9 @@ func (s *Store) GetPeer(ctx context.Context, id int64) (Peer, error) {
 
 // GetPeerByUsername returns the cached peer by username (without leading @), or sql.ErrNoRows.
 func (s *Store) GetPeerByUsername(ctx context.Context, username string) (Peer, error) {
+	if s.peerBackend != nil {
+		return s.peerBackend.GetPeerByUsername(ctx, username)
+	}
 	var p Peer
 	var typ string
 	var isMegagroup, isDeactivated int
@@ -275,6 +310,9 @@ func (s *Store) GetPeerByUsername(ctx context.Context, username string) (Peer, e
 // Chats map in updates/getChat). Does not touch access_hash or bot_member_status.
 // No-op if the peer isn't cached (callers cache peers before flagging them).
 func (s *Store) SaveChatFlags(ctx context.Context, id int64, isMegagroup, isDeactivated bool, migratedTo string) error {
+	if s.peerBackend != nil {
+		return s.peerBackend.SaveChatFlags(ctx, id, isMegagroup, isDeactivated, migratedTo)
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	_, err := s.db.ExecContext(ctx, `UPDATE peers SET is_megagroup=?, is_deactivated=?, migrated_to=? WHERE id=?`,
@@ -285,6 +323,9 @@ func (s *Store) SaveChatFlags(ctx context.Context, id int64, isMegagroup, isDeac
 // SaveBotMemberStatus records the bot's own membership status in a chat (from a
 // participant update or getChatMember). No-op when status is empty.
 func (s *Store) SaveBotMemberStatus(ctx context.Context, id int64, status string) error {
+	if s.peerBackend != nil {
+		return s.peerBackend.SaveBotMemberStatus(ctx, id, status)
+	}
 	if status == "" {
 		return nil
 	}
@@ -312,6 +353,9 @@ type WebhookConfig struct {
 
 // SetWebhookConfig upserts the webhook config for this bot.
 func (s *Store) SetWebhookConfig(ctx context.Context, cfg WebhookConfig) error {
+	if s.peerBackend != nil {
+		return ErrExternalWebhookUnsupported
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	_, err := s.db.ExecContext(ctx,
@@ -327,6 +371,9 @@ func (s *Store) SetWebhookConfig(ctx context.Context, cfg WebhookConfig) error {
 
 // GetWebhookConfig returns the stored webhook config, or sql.ErrNoRows.
 func (s *Store) GetWebhookConfig(ctx context.Context) (WebhookConfig, error) {
+	if s.peerBackend != nil {
+		return WebhookConfig{}, ErrExternalWebhookUnsupported
+	}
 	var cfg WebhookConfig
 	var cert []byte
 	var fixIP int
@@ -343,6 +390,9 @@ func (s *Store) GetWebhookConfig(ctx context.Context) (WebhookConfig, error) {
 
 // DeleteWebhookConfig removes the webhook config for this bot.
 func (s *Store) DeleteWebhookConfig(ctx context.Context) error {
+	if s.peerBackend != nil {
+		return ErrExternalWebhookUnsupported
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	_, err := s.db.ExecContext(ctx, `DELETE FROM webhook_config WHERE id = 1`)
@@ -351,6 +401,9 @@ func (s *Store) DeleteWebhookConfig(ctx context.Context) error {
 
 // SetWebhookError records the last delivery error.
 func (s *Store) SetWebhookError(ctx context.Context, date int64, message string) error {
+	if s.peerBackend != nil {
+		return ErrExternalWebhookUnsupported
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	_, err := s.db.ExecContext(ctx,

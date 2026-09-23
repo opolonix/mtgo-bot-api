@@ -5,30 +5,38 @@ import (
 	"fmt"
 	"strconv"
 
+	"github.com/mtgo-labs/mtgo-bot-api/internal/storage"
 	"github.com/mtgo-labs/mtgo/telegram"
 	mtgotypes "github.com/mtgo-labs/mtgo/telegram/types"
 	"github.com/mtgo-labs/mtgo/tg"
 )
 
-// ConvertRawUpdates converts the canonical layer-229 Updates object supplied by
-// Telefeeds into webhook-shaped Bot API updates. It deliberately does not use
-// getUpdates or the upstream queue: delivery and backpressure belong to the
-// Telefeeds gRPC stream.
-func (c *Client) ConvertRawUpdates(body []byte) ([][]byte, error) {
+// ConvertRawUpdatesWithPeers also returns the complete peers carried by the
+// update, so an external host can persist them in one batch.
+func (c *Client) ConvertRawUpdatesWithPeers(body []byte) ([][]byte, []storage.Peer, error) {
+	return c.convertRawUpdates(body)
+}
+
+func (c *Client) convertRawUpdates(body []byte) ([][]byte, []storage.Peer, error) {
 	object, err := tg.ReadTLObject(tg.NewReader(body))
 	if err != nil {
-		return nil, fmt.Errorf("decode TL update: %w", err)
+		return nil, nil, fmt.Errorf("decode TL update: %w", err)
 	}
 	updates, ok := object.(tg.UpdatesClass)
 	if !ok {
-		return nil, fmt.Errorf("expected UpdatesClass, got %T", object)
+		return nil, nil, fmt.Errorf("expected UpdatesClass, got %T", object)
 	}
 	users, chats, rawUpdates := flattenExternalUpdates(updates, c.botID)
+	peerRecords := make([]storage.Peer, 0, len(users)+len(chats))
 	userMap := make(map[int64]*mtgotypes.User, len(users))
 	for _, user := range users {
 		parsed := mtgotypes.ParseUser(user)
 		if parsed != nil {
 			userMap[parsed.ID] = parsed
+			peerRecords = append(peerRecords, storage.Peer{
+				ID: parsed.ID, AccessHash: parsed.AccessHash, Type: storage.PeerTypeUser,
+				Username: parsed.Username, FirstName: parsed.FirstName,
+			})
 		}
 	}
 	chatMap := make(map[int64]*mtgotypes.Chat, len(chats))
@@ -36,6 +44,26 @@ func (c *Client) ConvertRawUpdates(body []byte) ([][]byte, error) {
 		parsed := mtgotypes.ParseChatFromChat(chat)
 		if parsed != nil {
 			chatMap[parsed.ID] = parsed
+			switch value := chat.(type) {
+			case *tg.Channel:
+				peerRecords = append(peerRecords, storage.Peer{
+					ID: value.ID, AccessHash: value.AccessHash, Type: storage.PeerTypeChannel,
+					Username: value.Username, IsMegagroup: value.Megagroup,
+				})
+			case *tg.ChannelForbidden:
+				peerRecords = append(peerRecords, storage.Peer{
+					ID: value.ID, AccessHash: value.AccessHash, Type: storage.PeerTypeChannel,
+					IsMegagroup: value.Megagroup, BotMemberStatus: "kicked",
+				})
+			case *tg.Chat:
+				peerRecords = append(peerRecords, storage.Peer{
+					ID: value.ID, Type: storage.PeerTypeChat, IsDeactivated: value.Deactivated,
+				})
+			case *tg.ChatForbidden:
+				peerRecords = append(peerRecords, storage.Peer{
+					ID: value.ID, Type: storage.PeerTypeChat, BotMemberStatus: "kicked",
+				})
+			}
 		}
 	}
 	peers := mtgotypes.NewPeerMapFromClasses(users, chats)
@@ -47,14 +75,13 @@ func (c *Client) ConvertRawUpdates(body []byte) ([][]byte, error) {
 		if object == nil {
 			continue
 		}
-		object["update_id"] = c.nextUpdateID.Add(1)
 		encoded, err := json.Marshal(object)
 		if err != nil {
-			return nil, fmt.Errorf("encode Bot API update: %w", err)
+			return nil, nil, fmt.Errorf("encode Bot API update: %w", err)
 		}
 		result = append(result, encoded)
 	}
-	return result, nil
+	return result, peerRecords, nil
 }
 
 func flattenExternalUpdates(updates tg.UpdatesClass, botID string) ([]tg.UserClass, []tg.ChatClass, []tg.UpdateClass) {

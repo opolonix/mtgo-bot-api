@@ -39,6 +39,9 @@ func isFileReferenceExpired(err error) bool {
 // exactly as on the official server when TDLib has no file source. Returns
 // (ref, true) only when a fresh reference was actually obtained.
 func (c *Client) tryRefreshFileReference(ctx context.Context, d fileid.Decoded) ([]byte, bool) {
+	if c.msgs == nil {
+		return nil, false
+	}
 	chatID, msgID, ok := c.msgs.sourceByMediaID(d.ID)
 	if !ok {
 		return nil, false

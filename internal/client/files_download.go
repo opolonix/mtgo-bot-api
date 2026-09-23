@@ -159,6 +159,10 @@ func (c *Client) downloadToTemp(ctx context.Context, decoded fileid.Decoded, loc
 // downloadWebByLocation streams a web file through upload.getWebFile, used by
 // TDLib WebRemoteFileLocation and remotely generated web thumbnails.
 func (c *Client) downloadWebByLocation(ctx context.Context, location tg.InputWebFileLocationClass) ([][]byte, int, error) {
+	chunkSize := c.params.DownloadChunkSize
+	if chunkSize <= 0 {
+		chunkSize = downloadChunkSize
+	}
 	var offset int32
 	var totalBytes int
 	var chunks [][]byte
@@ -166,7 +170,7 @@ func (c *Client) downloadWebByLocation(ctx context.Context, location tg.InputWeb
 		result, err := c.rpc.UploadGetWebFile(ctx, &tg.UploadGetWebFileRequest{
 			Location: location,
 			Offset:   offset,
-			Limit:    downloadChunkSize,
+			Limit:    chunkSize,
 		})
 		if err != nil {
 			return nil, 0, err
@@ -181,7 +185,7 @@ func (c *Client) downloadWebByLocation(ctx context.Context, location tg.InputWeb
 		if !c.params.LocalMode && totalBytes > maxDownloadFileSize {
 			return nil, 0, NewError(400, "Bad Request: file is too big")
 		}
-		if len(chunk) < downloadChunkSize || result.Size > 0 && totalBytes >= int(result.Size) {
+		if len(chunk) < int(chunkSize) || result.Size > 0 && totalBytes >= int(result.Size) {
 			break
 		}
 	}
@@ -213,12 +217,11 @@ func (c *Client) botTempDir() (string, error) {
 // writeChunksToFile writes the downloaded chunks to a fresh temp file and
 // returns its path and total size.
 func (c *Client) writeChunksToFile(botTempDir string, id int64, chunks [][]byte, total int) (string, int, error) {
-	fileName := fmt.Sprintf("file_%d_%d", id, total)
-	tempPath := filepath.Join(botTempDir, fileName)
-	out, err := os.Create(tempPath)
+	out, err := os.CreateTemp(botTempDir, fmt.Sprintf("file_%d_", id))
 	if err != nil {
 		return "", 0, NewError(500, "Internal Server Error: failed to create temp file: "+err.Error())
 	}
+	tempPath := out.Name()
 	defer func() { _ = out.Close() }()
 	for _, chunk := range chunks {
 		if _, err := out.Write(chunk); err != nil {
@@ -273,6 +276,10 @@ func (c *Client) downloadViaCDN(ctx context.Context, location tg.InputFileLocati
 // caller can refresh the file_reference and retry; the size-cap and
 // unavailable-file cases return an already-formed Bot API *Error.
 func (c *Client) downloadByLocation(ctx context.Context, location tg.InputFileLocationClass) ([][]byte, int, error) {
+	chunkSize := c.params.DownloadChunkSize
+	if chunkSize <= 0 {
+		chunkSize = downloadChunkSize
+	}
 	var offset int64
 	var totalBytes int
 	var chunks [][]byte
@@ -280,7 +287,7 @@ func (c *Client) downloadByLocation(ctx context.Context, location tg.InputFileLo
 		req := &tg.UploadGetFileRequest{
 			Location: location,
 			Offset:   offset,
-			Limit:    downloadChunkSize,
+			Limit:    chunkSize,
 		}
 		req.SetFlags()
 
@@ -305,7 +312,7 @@ func (c *Client) downloadByLocation(ctx context.Context, location tg.InputFileLo
 			return nil, 0, NewError(400, "Bad Request: file is too big")
 		}
 
-		if len(chunk) < downloadChunkSize {
+		if len(chunk) < int(chunkSize) {
 			break // last chunk
 		}
 	}

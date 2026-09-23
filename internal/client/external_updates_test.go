@@ -22,7 +22,7 @@ func TestConvertRawUpdates(t *testing.T) {
 	if err := raw.Encode(&encoded); err != nil {
 		t.Fatal(err)
 	}
-	updates, err := converter.ConvertRawUpdates(encoded.Bytes())
+	updates, _, err := converter.ConvertRawUpdatesWithPeers(encoded.Bytes())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -33,8 +33,8 @@ func TestConvertRawUpdates(t *testing.T) {
 	if err := json.Unmarshal(updates[0], &update); err != nil {
 		t.Fatal(err)
 	}
-	if update["update_id"] != float64(1) {
-		t.Fatalf("update_id = %v, want 1", update["update_id"])
+	if _, exists := update["update_id"]; exists {
+		t.Fatalf("update_id must be assigned by the host: %v", update["update_id"])
 	}
 	message := update["message"].(map[string]any)
 	if message["text"] != "hello" {

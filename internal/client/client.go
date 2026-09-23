@@ -25,13 +25,14 @@ import (
 
 // Params holds the per-bot connection configuration threaded from the Manager.
 type Params struct {
-	APIID     int32
-	APIHash   string
-	Dir       string // working directory for per-bot bot.db
-	TempDir   string // temp directory for file downloads/uploads
-	TestDC    bool
-	LocalMode bool           // --local: absolute file_path, no 20 MB download cap
-	TQueue    *tqueue.TQueue // shared global update queue (owned by Manager)
+	APIID             int32
+	APIHash           string
+	Dir               string // working directory for per-bot bot.db
+	TempDir           string // temp directory for file downloads/uploads
+	TestDC            bool
+	LocalMode         bool           // --local: absolute file_path, no 20 MB download cap
+	DownloadChunkSize int32          // host transport limit; zero uses the standard 1 MB
+	TQueue            *tqueue.TQueue // shared global update queue (owned by Manager)
 	// MsgCacheCap bounds the per-bot message cache. Zero uses the default.
 	MsgCacheCap int
 	// StartTime is the server process start time (parameters_->start_time_ in
@@ -59,6 +60,7 @@ type Client struct {
 	me                        *apitypes.User
 	msgs                      *msgCache
 	ready                     bool
+	hosted                    bool
 	connErr                   error
 	deliverer                 *webhook.Deliverer
 	allowedUpdates            map[string]bool // nil=default exclusions; non-nil=explicit allowlist
@@ -83,10 +85,9 @@ type Client struct {
 	// Lifecycle state (Client.cpp logging_out_ / closing_ / clear_tqueue_),
 	// read on every dispatch so set atomically to keep the hot path lock-free.
 	// See closingError / fail_query_closing (Client.cpp:16987-17032).
-	closing      atomic.Bool // td_api::close processed
-	loggingOut   atomic.Bool // auth.logOut sent
-	loggedOut    atomic.Bool // clear_tqueue_: queue cleared post-logout
-	nextUpdateID atomic.Int64
+	closing    atomic.Bool // td_api::close processed
+	loggingOut atomic.Bool // auth.logOut sent
+	loggedOut  atomic.Bool // clear_tqueue_: queue cleared post-logout
 }
 
 // NewClient builds an unconnected Client for the given token.
@@ -102,26 +103,19 @@ func NewClient(params Params, token string) *Client {
 	}
 }
 
-// NewExternalClient builds a Bot API client whose MTProto calls are delegated
-// to an existing transport. Telefeeds uses this mode because it owns the bot
-// authorization and update stream in clientshub instead of opening a second
-// Telegram connection here.
-func NewExternalClient(params Params, botID string, invoker tg.Invoker) (*Client, error) {
-	store, err := storage.Open(params.Dir, botID)
-	if err != nil {
-		return nil, err
-	}
+// NewHostedClient delegates peer persistence and raw TL calls to its host.
+// It neither opens SQLite nor retains a message cache or Telegram connection.
+func NewHostedClient(params Params, botID string, invoker tg.Invoker, peers storage.PeerBackend) *Client {
 	return &Client{
-		Token:        botID + ":telefeeds",
-		params:       params,
-		botID:        botID,
-		msgs:         newMsgCache(params.MsgCacheCap),
-		startTime:    time.Now(),
-		floodBuckets: make(map[int64]float64),
-		rpc:          tg.NewRPCClient(invoker),
-		store:        store,
-		ready:        true,
-	}, nil
+		Token:     botID + ":telefeeds",
+		params:    params,
+		botID:     botID,
+		startTime: time.Now(),
+		rpc:       tg.NewRPCClient(invoker),
+		store:     storage.NewExternalPeerStore(peers),
+		ready:     true,
+		hosted:    true,
+	}
 }
 
 // Stop gracefully shuts down the client: stops the webhook deliverer (if any)
