@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/mtgo-labs/mtgo/telegram"
+	"github.com/mtgo-labs/mtgo/tg"
 
 	botlog "github.com/mtgo-labs/mtgo-bot-api/internal/log"
 	"github.com/mtgo-labs/mtgo-bot-api/internal/storage"
@@ -82,9 +83,10 @@ type Client struct {
 	// Lifecycle state (Client.cpp logging_out_ / closing_ / clear_tqueue_),
 	// read on every dispatch so set atomically to keep the hot path lock-free.
 	// See closingError / fail_query_closing (Client.cpp:16987-17032).
-	closing    atomic.Bool // td_api::close processed
-	loggingOut atomic.Bool // auth.logOut sent
-	loggedOut  atomic.Bool // clear_tqueue_: queue cleared post-logout
+	closing      atomic.Bool // td_api::close processed
+	loggingOut   atomic.Bool // auth.logOut sent
+	loggedOut    atomic.Bool // clear_tqueue_: queue cleared post-logout
+	nextUpdateID atomic.Int64
 }
 
 // NewClient builds an unconnected Client for the given token.
@@ -98,6 +100,28 @@ func NewClient(params Params, token string) *Client {
 		startTime:    time.Now(),
 		floodBuckets: make(map[int64]float64),
 	}
+}
+
+// NewExternalClient builds a Bot API client whose MTProto calls are delegated
+// to an existing transport. Telefeeds uses this mode because it owns the bot
+// authorization and update stream in clientshub instead of opening a second
+// Telegram connection here.
+func NewExternalClient(params Params, botID string, invoker tg.Invoker) (*Client, error) {
+	store, err := storage.Open(params.Dir, botID)
+	if err != nil {
+		return nil, err
+	}
+	return &Client{
+		Token:        botID + ":telefeeds",
+		params:       params,
+		botID:        botID,
+		msgs:         newMsgCache(params.MsgCacheCap),
+		startTime:    time.Now(),
+		floodBuckets: make(map[int64]float64),
+		rpc:          tg.NewRPCClient(invoker),
+		store:        store,
+		ready:        true,
+	}, nil
 }
 
 // Stop gracefully shuts down the client: stops the webhook deliverer (if any)

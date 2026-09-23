@@ -19,6 +19,20 @@ func init() {
 	Register("getfile", (*Client).getFile)
 }
 
+// DownloadFile resolves a Bot API file_id through the Telefeeds-backed RPC
+// transport and returns the path of the staged file.
+func (c *Client) DownloadFile(ctx context.Context, fileID string) (string, error) {
+	result, err := c.getFile(ctx, &server.Query{Args: map[string]string{"file_id": fileID}})
+	if err != nil {
+		return "", err
+	}
+	file, ok := result.(*apitypes.File)
+	if !ok || file.FilePath == "" {
+		return "", errors.New("download did not produce a file path")
+	}
+	return file.FilePath, nil
+}
+
 // downloadChunkSize is the max bytes per UploadGetFile call (1 MB).
 // MTProto allows up to 1 MB per request.
 const downloadChunkSize = 1024 * 1024
@@ -221,6 +235,9 @@ func (c *Client) writeChunksToFile(botTempDir string, id int64, chunks [][]byte,
 // migration. The non-local 20 MB cap is enforced by cancelling the download once
 // it exceeds the limit.
 func (c *Client) downloadViaCDN(ctx context.Context, location tg.InputFileLocationClass, botTempDir string, id int64) (string, int, error) {
+	if c.conn == nil {
+		return "", 0, NewError(503, "Service Unavailable: CDN file download is unavailable through the remote transport")
+	}
 	tempPath := filepath.Join(botTempDir, fmt.Sprintf("file_%d_cdn", id))
 
 	dctx, cancel := context.WithCancel(ctx)

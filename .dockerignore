@@ -1,0 +1,8 @@
+.git
+.github
+.mtgo-bot-api
+bin
+coverage.out
+*.db
+*.db-shm
+*.db-wal
