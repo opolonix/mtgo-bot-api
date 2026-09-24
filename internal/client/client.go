@@ -14,7 +14,6 @@ import (
 	"time"
 
 	"github.com/mtgo-labs/mtgo/telegram"
-	"github.com/mtgo-labs/mtgo/tg"
 
 	botlog "github.com/mtgo-labs/mtgo-bot-api/internal/log"
 	"github.com/mtgo-labs/mtgo-bot-api/internal/storage"
@@ -100,21 +99,6 @@ func NewClient(params Params, token string) *Client {
 		msgs:         newMsgCache(params.MsgCacheCap),
 		startTime:    time.Now(),
 		floodBuckets: make(map[int64]float64),
-	}
-}
-
-// NewHostedClient delegates peer persistence and raw TL calls to its host.
-// It neither opens SQLite nor retains a message cache or Telegram connection.
-func NewHostedClient(params Params, botID string, invoker tg.Invoker, peers storage.PeerBackend) *Client {
-	return &Client{
-		Token:     botID + ":telefeeds",
-		params:    params,
-		botID:     botID,
-		startTime: time.Now(),
-		rpc:       tg.NewRPCClient(invoker),
-		store:     storage.NewExternalPeerStore(peers),
-		ready:     true,
-		hosted:    true,
 	}
 }
 

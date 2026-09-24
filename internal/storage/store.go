@@ -36,22 +36,6 @@ type Store struct {
 	peerBackend PeerBackend
 }
 
-var ErrExternalWebhookUnsupported = errors.New("webhooks are not available for externally managed Bot API clients")
-
-// PeerBackend lets an externally managed Bot API client use its host's peer
-// storage instead of creating another per-bot SQLite database or cache.
-type PeerBackend interface {
-	SavePeer(context.Context, Peer) error
-	GetPeer(context.Context, int64) (Peer, error)
-	GetPeerByUsername(context.Context, string) (Peer, error)
-	SaveChatFlags(context.Context, int64, bool, bool, string) error
-	SaveBotMemberStatus(context.Context, int64, string) error
-}
-
-func NewExternalPeerStore(backend PeerBackend) *Store {
-	return &Store{peerBackend: backend}
-}
-
 // ValidBotID reports whether s is a safe bot ID for use in filesystem paths:
 // a positive integer with no leading zero, path separators, dots, or
 // non-digit characters. This prevents path traversal via filepath.Join.

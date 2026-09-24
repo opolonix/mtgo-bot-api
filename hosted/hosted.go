@@ -35,7 +35,7 @@ func New(botID string, invoker tg.Invoker, peers PeerBackend) (*Client, error) {
 		return nil, errors.New("valid bot ID, TL invoker and peer backend are required")
 	}
 	return &Client{
-		client: client.NewHostedClient(client.Params{LocalMode: true, DownloadChunkSize: 512 * 1024}, botID, invoker, peers),
+		client: client.NewHostedClient(client.Params{LocalMode: true, DownloadChunkSize: 512 * 1024}, botID, editResultInvoker{Invoker: invoker}, peers),
 		botID:  botID,
 	}, nil
 }
@@ -54,6 +54,9 @@ func (c *Client) Invoke(ctx context.Context, method string, args map[string]stri
 	query.Token = c.botID + ":telefeeds"
 	query.Args = args
 	query.Files = files
+	if query.Method == "editmessagereplymarkup" {
+		query.Args = normalizeEditReplyMarkup(args)
+	}
 	if query.Args == nil {
 		query.Args = make(map[string]string)
 	}
