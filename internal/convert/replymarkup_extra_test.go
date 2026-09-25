@@ -121,3 +121,82 @@ func TestReplyMarkup_InvalidJSON(t *testing.T) {
 		t.Error("invalid JSON should error")
 	}
 }
+
+func TestReplyMarkup_ContactKeyboard(t *testing.T) {
+	raw := `{"keyboard":[[{"text":"Поделиться своим контактом","request_contact":true}]],"resize_keyboard":true,"one_time_keyboard":true,"input_field_placeholder":"+79991234567"}`
+	markup, err := ReplyMarkup(raw)
+	if err != nil {
+		t.Fatalf("error: %v", err)
+	}
+	keyboard, ok := markup.(*tg.ReplyKeyboardMarkup)
+	if !ok {
+		t.Fatalf("type = %T, want *ReplyKeyboardMarkup", markup)
+	}
+	if !keyboard.Resize || !keyboard.SingleUse || keyboard.Placeholder != "+79991234567" {
+		t.Fatalf("keyboard options = %+v", keyboard)
+	}
+	if len(keyboard.Rows) != 1 || len(keyboard.Rows[0].Buttons) != 1 {
+		t.Fatalf("keyboard rows = %+v", keyboard.Rows)
+	}
+	if _, ok := keyboard.Rows[0].Buttons[0].Type.(*tg.ButtonTypeRequestPhone); !ok {
+		t.Fatalf("button type = %T, want *ButtonTypeRequestPhone", keyboard.Rows[0].Buttons[0].Type)
+	}
+	request := &tg.MessagesSendMessageRequest{ReplyMarkup: markup}
+	request.SetFlags()
+	if !request.Flags.Has(2) {
+		t.Fatal("messages.sendMessage must include reply_markup flag")
+	}
+}
+
+func TestReplyMarkup_KeyboardVariants(t *testing.T) {
+	markup, err := ReplyMarkup(`{"keyboard":[["Текст",{"text":"Геопозиция","request_location":true},{"text":"Опрос","request_poll":{"type":"quiz"}},{"text":"Сайт","web_app":{"url":"https://example.com"}}]],"is_persistent":true,"selective":true}`)
+	if err != nil {
+		t.Fatalf("error: %v", err)
+	}
+	keyboard := markup.(*tg.ReplyKeyboardMarkup)
+	if !keyboard.Persistent || !keyboard.Selective {
+		t.Fatalf("keyboard options = %+v", keyboard)
+	}
+	buttons := keyboard.Rows[0].Buttons
+	if _, ok := buttons[0].Type.(*tg.ButtonTypeDefault); !ok {
+		t.Errorf("plain button type = %T", buttons[0].Type)
+	}
+	if _, ok := buttons[1].Type.(*tg.ButtonTypeRequestGeoLocation); !ok {
+		t.Errorf("location button type = %T", buttons[1].Type)
+	}
+	poll, ok := buttons[2].Type.(*tg.ButtonTypeRequestPoll)
+	if !ok || !poll.Quiz || !poll.Flags.Has(0) {
+		t.Errorf("poll button type = %T", buttons[2].Type)
+	}
+	if _, ok := buttons[3].Type.(*tg.ButtonTypeSimpleWebView); !ok {
+		t.Errorf("web app button type = %T", buttons[3].Type)
+	}
+}
+
+func TestReplyMarkup_RemoveAndForceReply(t *testing.T) {
+	removed, err := ReplyMarkup(`{"remove_keyboard":true,"selective":true}`)
+	if err != nil {
+		t.Fatalf("remove keyboard: %v", err)
+	}
+	hide, ok := removed.(*tg.ReplyKeyboardHide)
+	if !ok || !hide.Selective {
+		t.Fatalf("remove keyboard type = %T, value = %+v", removed, removed)
+	}
+	forced, err := ReplyMarkup(`{"force_reply":true,"selective":true,"input_field_placeholder":"Ответ"}`)
+	if err != nil {
+		t.Fatalf("force reply: %v", err)
+	}
+	force, ok := forced.(*tg.ReplyKeyboardForceReply)
+	if !ok || !force.Selective || force.Placeholder != "Ответ" {
+		t.Fatalf("force reply type = %T, value = %+v", forced, forced)
+	}
+}
+
+func TestReplyMarkup_UnsupportedKeyboardFails(t *testing.T) {
+	if _, err := ReplyMarkup(`{"keyboard":[[{"text":"Пользователи","request_users":{"request_id":1}}]]}`); err == nil {
+		t.Fatal("unsupported button must not be sent as a plain text button")
+	}
+	if _, err := ReplyMarkup(`{"unknown_markup":true}`); err == nil {
+		t.Fatal("unsupported reply markup must not be silently dropped")
+	}
+}

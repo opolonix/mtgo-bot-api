@@ -7,8 +7,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/mtgo-labs/mtgo/tg"
 	apitypes "github.com/mtgo-labs/mtgo-bot-api/internal/types"
+	"github.com/mtgo-labs/mtgo/tg"
 )
 
 // InlineQueryResults converts a JSON-encoded array of Bot API InlineQueryResult
@@ -551,12 +551,30 @@ func InlineMessageIDFromTL(id tg.InputBotInlineMessageIDClass) string {
 }
 
 // KeyboardButtonFromJSON converts a Bot API KeyboardButton JSON into a
-// tg.KeyboardButton for savePreparedKeyboardButton.
+// tg.KeyboardButton for reply keyboards and savePreparedKeyboardButton.
 func KeyboardButtonFromJSON(jsonStr string) (*tg.KeyboardButton, error) {
+	if strings.HasPrefix(strings.TrimSpace(jsonStr), `"`) {
+		var text string
+		if err := json.Unmarshal([]byte(jsonStr), &text); err != nil {
+			return nil, fmt.Errorf("invalid button JSON: %w", err)
+		}
+		if text == "" {
+			return nil, errors.New("button text is required")
+		}
+		return &tg.KeyboardButton{Text: text, Type: &tg.ButtonTypeDefault{}}, nil
+	}
 	var btn struct {
-		Text   string `json:"text"`
-		URL    string `json:"url,omitempty"`
-		WebApp struct {
+		Text            string `json:"text"`
+		URL             string `json:"url,omitempty"`
+		RequestContact  bool   `json:"request_contact"`
+		RequestLocation bool   `json:"request_location"`
+		RequestPoll     *struct {
+			Type string `json:"type"`
+		} `json:"request_poll"`
+		RequestUsers      json.RawMessage `json:"request_users"`
+		RequestChat       json.RawMessage `json:"request_chat"`
+		RequestManagedBot json.RawMessage `json:"request_managed_bot"`
+		WebApp            struct {
 			URL string `json:"url"`
 		} `json:"web_app"`
 	}
@@ -565,6 +583,28 @@ func KeyboardButtonFromJSON(jsonStr string) (*tg.KeyboardButton, error) {
 	}
 	if btn.Text == "" {
 		return nil, errors.New("button text is required")
+	}
+	if len(btn.RequestUsers) > 0 || len(btn.RequestChat) > 0 || len(btn.RequestManagedBot) > 0 {
+		return nil, errors.New("request peer buttons are not supported")
+	}
+	if btn.RequestContact {
+		return &tg.KeyboardButton{Text: btn.Text, Type: &tg.ButtonTypeRequestPhone{}}, nil
+	}
+	if btn.RequestLocation {
+		return &tg.KeyboardButton{Text: btn.Text, Type: &tg.ButtonTypeRequestGeoLocation{}}, nil
+	}
+	if btn.RequestPoll != nil {
+		poll := &tg.ButtonTypeRequestPoll{}
+		switch btn.RequestPoll.Type {
+		case "quiz":
+			poll.SetQuiz(true)
+		case "regular":
+			poll.SetQuiz(false)
+		case "":
+		default:
+			return nil, fmt.Errorf("invalid request_poll type %q", btn.RequestPoll.Type)
+		}
+		return &tg.KeyboardButton{Text: btn.Text, Type: poll}, nil
 	}
 	if btn.WebApp.URL != "" {
 		return &tg.KeyboardButton{
