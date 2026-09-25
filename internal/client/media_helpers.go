@@ -40,8 +40,17 @@ func (c *Client) docMediaInput(
 	mimeType string,
 ) (tg.InputMediaClass, error) {
 	val := q.Arg(paramName)
+	fileName := paramName
+	attached := strings.HasPrefix(val, "attach://")
+	if attached {
+		fileName = strings.TrimPrefix(val, "attach://")
+		if fileName == "" {
+			return nil, NewError(400, "Bad Request: attached file name is empty")
+		}
+		val = ""
+	}
 	if val == "" {
-		if f, ok := q.File(paramName); ok {
+		if f, ok := q.File(fileName); ok {
 			// sendSticker uploads must carry DocumentAttributeSticker so the
 			// result classifies as a sticker (mirrors TDLib inputMessageSticker).
 			if paramName == "sticker" {
@@ -61,6 +70,9 @@ func (c *Client) docMediaInput(
 				u.ForceFile = true
 			}
 			return media, nil
+		}
+		if attached {
+			return nil, NewError(400, "Bad Request: attached file \""+fileName+"\" not found")
 		}
 		return nil, NewError(400, "Bad Request: parameter \""+paramName+"\" is required")
 	}
@@ -86,9 +98,21 @@ func (c *Client) photoMediaInput(
 	paramName string,
 ) (tg.InputMediaClass, error) {
 	val := q.Arg(paramName)
+	fileName := paramName
+	attached := strings.HasPrefix(val, "attach://")
+	if attached {
+		fileName = strings.TrimPrefix(val, "attach://")
+		if fileName == "" {
+			return nil, NewError(400, "Bad Request: attached file name is empty")
+		}
+		val = ""
+	}
 	if val == "" {
-		if f, ok := q.File(paramName); ok {
+		if f, ok := q.File(fileName); ok {
 			return c.uploadedPhotoMedia(ctx, q, f)
+		}
+		if attached {
+			return nil, NewError(400, "Bad Request: attached file \""+fileName+"\" not found")
 		}
 		return nil, NewError(400, "Bad Request: parameter \""+paramName+"\" is required")
 	}
