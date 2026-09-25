@@ -165,7 +165,9 @@ func (c *Client) finishSend(ctx context.Context, result tg.UpdatesClass, peer tg
 	// Convert to Bot API format, enriching From (bot identity), private-chat
 	// details, and channel/group chat metadata to match the reference's full
 	// User/Chat output.
-	return c.botMessage(ctx, msg, extractChats(result)), nil
+	out := c.botMessage(ctx, msg, extractChats(result))
+	c.rememberHostedMessage(ctx, out)
+	return out, nil
 }
 
 // randomID generates a random int64 for the MTProto random_id field.

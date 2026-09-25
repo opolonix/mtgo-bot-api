@@ -1,11 +1,15 @@
 package client
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"strconv"
+	"time"
 
 	"github.com/mtgo-labs/mtgo-bot-api/internal/storage"
+	apitypes "github.com/mtgo-labs/mtgo-bot-api/internal/types"
 	"github.com/mtgo-labs/mtgo/telegram"
 	mtgotypes "github.com/mtgo-labs/mtgo/telegram/types"
 	"github.com/mtgo-labs/mtgo/tg"
@@ -72,6 +76,66 @@ func (c *Client) convertRawUpdates(body []byte) ([][]byte, []storage.Peer, error
 	for _, raw := range rawUpdates {
 		update := externalUpdate(raw, userMap, chatMap, peers)
 		object := buildUpdateObject(update, selfID, c.msgs)
+		if c.hostedMessages != nil {
+			for _, name := range []string{"message", "edited_message", "channel_post", "edited_channel_post", "business_message", "edited_business_message"} {
+				if message, ok := object[name].(*apitypes.Message); ok {
+					c.rememberHostedMessage(context.Background(), message)
+				}
+			}
+			if callback, ok := object["callback_query"].(*apitypes.CallbackQuery); ok && callback.Message != nil {
+				message, active, err := c.hostedMessages.GetMessage(context.Background(), callback.Message.Chat.ID, callback.Message.MessageID)
+				if err != nil {
+					slog.Warn("hosted callback message cache read failed", "bot_id", c.botID, "error", err)
+				}
+				if message != nil && message.Date > 0 {
+					callback.Message = message
+				} else if active {
+					ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+					if callback.Message.Chat.ID <= dialogChannelThreshold {
+						channelID := -callback.Message.Chat.ID - dialogChannelMark
+						for _, peer := range peerRecords {
+							if peer.ID == channelID && peer.Type == storage.PeerTypeChannel {
+								if err := c.store.SavePeer(ctx, peer); err != nil {
+									slog.Debug("callback channel peer could not be saved", "bot_id", c.botID, "error", err)
+								}
+								break
+							}
+						}
+					}
+					messages, fetchErr := c.fetchSourceMessages(ctx, callback.Message.Chat.ID, callback.Message.MessageID)
+					cancel()
+					if fetchErr != nil {
+						slog.Debug("callback message lookup unavailable", "bot_id", c.botID, "error", fetchErr)
+					}
+					for _, candidate := range messages {
+						original, ok := candidate.(*tg.Message)
+						if !ok || int64(original.ID) != callback.Message.MessageID {
+							continue
+						}
+						converted := c.botMessage(context.Background(), original, nil)
+						if converted.Date > 0 && converted.Chat.ID == callback.Message.Chat.ID {
+							callback.Message = converted
+							c.rememberHostedMessage(context.Background(), converted)
+						}
+						break
+					}
+				}
+			}
+			if deleted, ok := raw.(*tg.UpdateDeleteMessages); ok {
+				for _, id := range deleted.Messages {
+					if err := c.hostedMessages.DeleteMessage(context.Background(), 0, int64(id)); err != nil {
+						slog.Warn("hosted deleted message cache removal failed", "bot_id", c.botID, "error", err)
+					}
+				}
+			}
+			if deleted, ok := raw.(*tg.UpdateDeleteChannelMessages); ok {
+				for _, id := range deleted.Messages {
+					if err := c.hostedMessages.DeleteMessage(context.Background(), -1_000_000_000_000-deleted.ChannelID, int64(id)); err != nil {
+						slog.Warn("hosted deleted channel message cache removal failed", "bot_id", c.botID, "error", err)
+					}
+				}
+			}
+		}
 		if object == nil {
 			continue
 		}
@@ -124,6 +188,8 @@ func externalUpdate(raw tg.UpdateClass, users map[int64]*mtgotypes.User, chats m
 	case *tg.UpdateDeleteChannelMessages:
 		update.DeletedMessages = &mtgotypes.DeletedMessages{Messages: value.Messages, ChatID: value.ChannelID}
 	case *tg.UpdateBotCallbackQuery:
+		update.CallbackQuery = mtgotypes.ParseCallbackQuery(value)
+	case *tg.UpdateInlineBotCallbackQuery:
 		update.CallbackQuery = mtgotypes.ParseCallbackQuery(value)
 	case *tg.UpdateBotInlineQuery:
 		update.InlineQuery = &mtgotypes.InlineQuery{ID: value.QueryID, UserID: value.UserID, Query: value.Query, Offset: value.Offset}

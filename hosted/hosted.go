@@ -11,6 +11,7 @@ import (
 	"github.com/mtgo-labs/mtgo-bot-api/internal/client"
 	"github.com/mtgo-labs/mtgo-bot-api/internal/server"
 	"github.com/mtgo-labs/mtgo-bot-api/internal/storage"
+	apitypes "github.com/mtgo-labs/mtgo-bot-api/internal/types"
 	"github.com/mtgo-labs/mtgo/tg"
 )
 
@@ -18,6 +19,8 @@ type Peer = storage.Peer
 type PeerType = storage.PeerType
 type PeerBackend = storage.PeerBackend
 type File = server.File
+type Message = apitypes.Message
+type MessageStore = client.HostedMessageStore
 
 const (
 	PeerTypeUser    = storage.PeerTypeUser
@@ -31,11 +34,15 @@ type Client struct {
 }
 
 func New(botID string, invoker tg.Invoker, peers PeerBackend) (*Client, error) {
+	return NewWithStore(botID, invoker, peers, nil)
+}
+
+func NewWithStore(botID string, invoker tg.Invoker, peers PeerBackend, messages MessageStore) (*Client, error) {
 	if !storage.ValidBotID(botID) || invoker == nil || peers == nil {
 		return nil, errors.New("valid bot ID, TL invoker and peer backend are required")
 	}
 	return &Client{
-		client: client.NewHostedClient(client.Params{LocalMode: true, DownloadChunkSize: 512 * 1024}, botID, editResultInvoker{Invoker: invoker}, peers),
+		client: client.NewHostedClientWithStore(client.Params{LocalMode: true, DownloadChunkSize: 512 * 1024}, botID, editResultInvoker{Invoker: invoker}, peers, messages),
 		botID:  botID,
 	}, nil
 }

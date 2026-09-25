@@ -168,6 +168,7 @@ func (c *Client) invokeEdit(ctx context.Context, req *tg.MessagesEditMessageRequ
 	if connID != "" {
 		out.BusinessConnectionID = connID
 	}
+	c.rememberHostedMessage(ctx, out)
 	return out, nil
 }
 

@@ -58,6 +58,7 @@ type Client struct {
 	store                     *storage.Store
 	me                        *apitypes.User
 	msgs                      *msgCache
+	hostedMessages            HostedMessageStore
 	ready                     bool
 	hosted                    bool
 	connErr                   error

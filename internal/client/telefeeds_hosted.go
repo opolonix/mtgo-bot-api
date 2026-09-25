@@ -3,6 +3,7 @@ package client
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"time"
 
 	"github.com/mtgo-labs/mtgo/tg"
@@ -15,15 +16,35 @@ import (
 // NewHostedClient delegates peer persistence and raw TL calls to its host.
 // It neither opens SQLite nor retains a message cache or Telegram connection.
 func NewHostedClient(params Params, botID string, invoker tg.Invoker, peers storage.PeerBackend) *Client {
+	return NewHostedClientWithStore(params, botID, invoker, peers, nil)
+}
+
+type HostedMessageStore interface {
+	GetMessage(context.Context, int64, int64) (*apitypes.Message, bool, error)
+	PutMessage(context.Context, *apitypes.Message) error
+	DeleteMessage(context.Context, int64, int64) error
+}
+
+func NewHostedClientWithStore(params Params, botID string, invoker tg.Invoker, peers storage.PeerBackend, messages HostedMessageStore) *Client {
 	return &Client{
-		Token:     botID + ":telefeeds",
-		params:    params,
-		botID:     botID,
-		startTime: time.Now(),
-		rpc:       tg.NewRPCClient(invoker),
-		store:     storage.NewExternalPeerStore(peers),
-		ready:     true,
-		hosted:    true,
+		Token:          botID + ":telefeeds",
+		params:         params,
+		botID:          botID,
+		startTime:      time.Now(),
+		rpc:            tg.NewRPCClient(invoker),
+		store:          storage.NewExternalPeerStore(peers),
+		hostedMessages: messages,
+		ready:          true,
+		hosted:         true,
+	}
+}
+
+func (c *Client) rememberHostedMessage(ctx context.Context, message *apitypes.Message) {
+	if c.hostedMessages == nil || message == nil || message.Date == 0 {
+		return
+	}
+	if err := c.hostedMessages.PutMessage(ctx, message); err != nil {
+		slog.Warn("hosted message cache write failed", "bot_id", c.botID, "error", err)
 	}
 }
 
