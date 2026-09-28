@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/mtgo-labs/mtgo/tg"
+	"github.com/mtgo-labs/mtgo/tgerr"
 
 	"github.com/mtgo-labs/mtgo-bot-api/internal/convert"
 	"github.com/mtgo-labs/mtgo-bot-api/internal/server"
@@ -345,7 +346,38 @@ func (c *Client) getChatMemberChannel(ctx context.Context, id, userID int64) (an
 		Participant: peer,
 	})
 	if err != nil {
-		return nil, rpcError(err)
+		originalError := rpcError(err)
+		rpcErr, ok := tgerr.As(err)
+		if !ok || !rpcErr.IsType("USER_NOT_PARTICIPANT") {
+			return nil, originalError
+		}
+		// This error can also refer to the calling bot. Verify its membership and
+		// participant-list access before treating the target user as left.
+		self, selfErr := c.rpc.ChannelsGetParticipant(ctx, &tg.ChannelsGetParticipantRequest{
+			Channel: inputCh, Participant: &tg.InputPeerSelf{},
+		})
+		if selfErr != nil {
+			return nil, originalError
+		}
+		own, ok := self.(*tg.ChannelsChannelParticipant)
+		if !ok {
+			return nil, originalError
+		}
+		switch own.Participant.(type) {
+		case *tg.ChannelParticipant, *tg.ChannelParticipantSelf, *tg.ChannelParticipantAdmin, *tg.ChannelParticipantCreator:
+		default:
+			return nil, originalError
+		}
+		participants, listErr := c.rpc.ChannelsGetParticipants(ctx, &tg.ChannelsGetParticipantsRequest{
+			Channel: inputCh, Filter: &tg.ChannelParticipantsRecent{}, Limit: 1,
+		})
+		if listErr != nil {
+			return nil, originalError
+		}
+		if _, ok := participants.(*tg.ChannelsChannelParticipants); !ok {
+			return nil, originalError
+		}
+		return convert.ChatMemberFromParticipant(&tg.ChannelParticipantLeft{Peer: &tg.PeerUser{UserID: userID}}, nil), nil
 	}
 	part, ok := result.(*tg.ChannelsChannelParticipant)
 	if !ok {

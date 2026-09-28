@@ -86,6 +86,7 @@ func appendChatAdminRights(f []jsonField, m ChatMember, ct ChatType) []jsonField
 	if ct == ChatTypeGroup || ct == ChatTypeSupergroup {
 		f = append(f, jsonField{"can_manage_tags", m.CanManageTags})
 	}
+	f = append(f, jsonField{"can_send_welcome_messages", m.CanSendWelcomeMessages})
 	f = append(f, jsonField{"is_anonymous", m.IsAnonymous})
 	return f
 }

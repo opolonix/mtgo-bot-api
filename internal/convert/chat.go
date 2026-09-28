@@ -586,6 +586,12 @@ func ChatMemberFromParticipant(p tg.ChannelParticipantClass, users map[int64]*tg
 			IsMember: true,
 			Tag:      part.Rank,
 		}
+	case *tg.ChannelParticipantLeft:
+		m := &apitypes.ChatMember{Status: "left"}
+		if peer, ok := part.Peer.(*tg.PeerUser); ok {
+			m.User = resolveUser(peer.UserID, users)
+		}
+		return m
 	case *tg.ChannelParticipantCreator:
 		m := &apitypes.ChatMember{
 			Status:      "creator",
@@ -691,6 +697,7 @@ func fillAdminRights(m *apitypes.ChatMember, r *tg.ChatAdminRights) {
 	m.CanManageTopics = r.ManageTopics
 	m.CanManageDirectMessages = r.ManageDirectMessages
 	m.CanManageTags = r.ManageRanks
+	m.CanSendWelcomeMessages = r.ManageWelcomeMessages
 }
 
 func fillBannedRights(m *apitypes.ChatMember, r *tg.ChatBannedRights) {

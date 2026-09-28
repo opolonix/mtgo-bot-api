@@ -1,6 +1,7 @@
 package convert
 
 import (
+	"encoding/json"
 	"testing"
 
 	"github.com/mtgo-labs/mtgo/tg"
@@ -26,6 +27,7 @@ func TestChatMemberFromParticipant_AllVariants(t *testing.T) {
 	}{
 		{"normal", &tg.ChannelParticipant{UserID: 10}, "member", true},
 		{"self", &tg.ChannelParticipantSelf{UserID: 10}, "member", true},
+		{"left", &tg.ChannelParticipantLeft{Peer: &tg.PeerUser{UserID: 10}}, "left", false},
 		{"creator", &tg.ChannelParticipantCreator{UserID: 10}, "creator", true},
 		{"admin", &tg.ChannelParticipantAdmin{UserID: 10}, "administrator", true},
 		{
@@ -88,6 +90,28 @@ func TestChatMemberFromParticipant_AdminRights(t *testing.T) {
 	}
 	if !m.IsAnonymous {
 		t.Error("IsAnonymous should be true")
+	}
+}
+
+func TestChatMemberFromParticipant_WelcomeMessages(t *testing.T) {
+	for _, allowed := range []bool{false, true} {
+		member := ChatMemberFromParticipant(&tg.ChannelParticipantAdmin{
+			UserID: 5, AdminRights: &tg.ChatAdminRights{ManageWelcomeMessages: allowed},
+		}, nil)
+		if member.CanSendWelcomeMessages != allowed {
+			t.Fatalf("CanSendWelcomeMessages = %v, want %v", member.CanSendWelcomeMessages, allowed)
+		}
+		encoded, err := json.Marshal(member)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var fields map[string]any
+		if err := json.Unmarshal(encoded, &fields); err != nil {
+			t.Fatal(err)
+		}
+		if got, ok := fields["can_send_welcome_messages"]; !ok || got != allowed {
+			t.Errorf("can_send_welcome_messages = %v (present: %v), want %v: %s", got, ok, allowed, encoded)
+		}
 	}
 }
 

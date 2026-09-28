@@ -174,6 +174,7 @@ type ChatMember struct {
 	CanDeleteStories        bool   `json:"can_delete_stories,omitempty"`
 	CanManageDirectMessages bool   `json:"can_manage_direct_messages,omitempty"`
 	CanManageTags           bool   `json:"can_manage_tags,omitempty"`
+	CanSendWelcomeMessages  bool   `json:"can_send_welcome_messages,omitempty"`
 	IsMember                bool   `json:"is_member,omitempty"`
 	CanSendMessages         bool   `json:"can_send_messages,omitempty"`
 	CanSendAudios           bool   `json:"can_send_audios,omitempty"`
