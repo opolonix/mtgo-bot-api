@@ -51,6 +51,9 @@ func (c *Client) docMediaInput(
 	}
 	if val == "" {
 		if f, ok := q.File(fileName); ok {
+			if paramName == "document" && f.FileName != "" {
+				attrs = append(attrs, &tg.DocumentAttributeFilename{FileName: f.FileName})
+			}
 			// sendSticker uploads must carry DocumentAttributeSticker so the
 			// result classifies as a sticker (mirrors TDLib inputMessageSticker).
 			if paramName == "sticker" {
